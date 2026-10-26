@@ -1,6 +1,6 @@
 """
 Feature Engineering Module for HackSphere 3.0
-Advanced Thermodynamic & Temporal Feature Pipeline for Microgrid Demand Forecasting.
+Thermal Inertia, Moving Windows, Multi-Harmonics, and Thermodynamic Indices.
 Shared across training, predict.py inference, and backend API.
 """
 
@@ -31,9 +31,13 @@ FEATURE_COLUMNS = [
     "cooling_26",
     "heating_15",
     "temp_diff_1",
+    "temp_diff_2",
     "temp_roll_3",
+    "temp_roll_6",
     "solar_diff_1",
+    "solar_roll_3",
     "humid_diff_1",
+    "humid_roll_3",
     "is_peak_window",
     "is_weekend",
 ]
@@ -42,7 +46,7 @@ FEATURE_COLUMNS = [
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Extracts high-signal temporal, harmonic, and meteorological thermodynamic
-    features from raw input telemetry.
+    features with thermal rolling lag windows from raw input telemetry.
     Compatible with batch DataFrames (N >= 24) and single-row inputs (N = 1).
     """
     data = df.copy()
@@ -60,8 +64,19 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     humid = data["humidity_pct"].astype(float)
     solar = data["solar_irradiance_wm2"].astype(float)
 
-    # 1. Thermodynamic Calculations
-    # Vapor pressure (Tetens formula) & Dew point
+    # 1. Thermal Inertia & Moving Windows (Building heat retention)
+    temp_diff_1 = temp_c.diff(1).fillna(0.0)
+    temp_diff_2 = temp_c.diff(2).fillna(0.0)
+    temp_roll_3 = temp_c.rolling(3, min_periods=1).mean().bfill().fillna(temp_c)
+    temp_roll_6 = temp_c.rolling(6, min_periods=1).mean().bfill().fillna(temp_c)
+
+    solar_diff_1 = solar.diff(1).fillna(0.0)
+    solar_roll_3 = solar.rolling(3, min_periods=1).mean().bfill().fillna(solar)
+
+    humid_diff_1 = humid.diff(1).fillna(0.0)
+    humid_roll_3 = humid.rolling(3, min_periods=1).mean().bfill().fillna(humid)
+
+    # 2. Thermodynamic Calculations
     vp = 6.11 * (10.0 ** (7.5 * temp_c / (237.3 + temp_c))) * (humid / 100.0)
     dew_point = temp_c - ((100.0 - humid) / 5.0)
 
@@ -70,12 +85,12 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     hi_f = 0.5 * (temp_f + 61.0 + ((temp_f - 68.0) * 1.2) + (humid * 0.094))
     heat_index_c = (hi_f - 32.0) * 5.0 / 9.0
 
-    # Non-linear Degree factors (cooling surge & heating baseline)
+    # Non-linear Degree factors
     cooling_22 = np.maximum(0.0, temp_c - 22.0)
     cooling_26 = np.maximum(0.0, temp_c - 26.0)
     heating_15 = np.maximum(0.0, 15.0 - temp_c)
 
-    # 2. Harmonic Temporal Encodings (captures bimodal daily demand curves)
+    # 3. Harmonic Temporal Encodings (captures bimodal daily demand curves)
     sin_h = np.sin(2.0 * np.pi * hour / 24.0)
     cos_h = np.cos(2.0 * np.pi * hour / 24.0)
     sin_2h = np.sin(4.0 * np.pi * hour / 24.0)
@@ -85,13 +100,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     cos_dow = np.cos(2.0 * np.pi * dayofweek / 7.0)
     sin_m = np.sin(2.0 * np.pi * (month - 1) / 12.0)
     cos_m = np.cos(2.0 * np.pi * (month - 1) / 12.0)
-
-    # 3. Dynamic Sequential Diffs & Rolling Thermal Mass
-    # Handles N=1 gracefully with fillna(0.0)
-    temp_diff_1 = temp_c.diff().fillna(0.0)
-    temp_roll_3 = temp_c.rolling(3, min_periods=1).mean().bfill().fillna(temp_c)
-    solar_diff_1 = solar.diff().fillna(0.0)
-    humid_diff_1 = humid.diff().fillna(0.0)
 
     is_peak_window = ((hour >= 18) & (hour <= 22)).astype(int)
     is_weekend = (dayofweek >= 5).astype(int)
@@ -120,9 +128,13 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     data["heating_15"] = heating_15
 
     data["temp_diff_1"] = temp_diff_1
+    data["temp_diff_2"] = temp_diff_2
     data["temp_roll_3"] = temp_roll_3
+    data["temp_roll_6"] = temp_roll_6
     data["solar_diff_1"] = solar_diff_1
+    data["solar_roll_3"] = solar_roll_3
     data["humid_diff_1"] = humid_diff_1
+    data["humid_roll_3"] = humid_roll_3
 
     data["is_peak_window"] = is_peak_window
     data["is_weekend"] = is_weekend
