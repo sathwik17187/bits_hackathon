@@ -1,6 +1,7 @@
 """
 Feature Engineering Module for HackSphere 3.0
-Thermal Inertia, Moving Windows, Multi-Harmonics, and Thermodynamic Indices.
+Thermal Inertia, Quadratic Cooling Surge, Moving Windows, Multi-Harmonics,
+and Thermodynamic Temperature-Hour Cross-Interactions.
 Shared across training, predict.py inference, and backend API.
 """
 
@@ -28,6 +29,8 @@ FEATURE_COLUMNS = [
     "dew_point",
     "vapor_pressure",
     "cooling_22",
+    "cooling_24",
+    "cooling_24_sq",
     "cooling_26",
     "heating_15",
     "temp_diff_1",
@@ -38,6 +41,8 @@ FEATURE_COLUMNS = [
     "solar_roll_3",
     "humid_diff_1",
     "humid_roll_3",
+    "temp_x_hour",
+    "solar_x_temp",
     "is_peak_window",
     "is_weekend",
 ]
@@ -46,7 +51,7 @@ FEATURE_COLUMNS = [
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Extracts high-signal temporal, harmonic, and meteorological thermodynamic
-    features with thermal rolling lag windows from raw input telemetry.
+    features with thermal rolling lag windows and non-linear quadratic surges.
     Compatible with batch DataFrames (N >= 24) and single-row inputs (N = 1).
     """
     data = df.copy()
@@ -64,7 +69,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     humid = data["humidity_pct"].astype(float)
     solar = data["solar_irradiance_wm2"].astype(float)
 
-    # 1. Thermal Inertia & Moving Windows (Building heat retention)
+    # 1. Thermal Inertia & Moving Windows
     temp_diff_1 = temp_c.diff(1).fillna(0.0)
     temp_diff_2 = temp_c.diff(2).fillna(0.0)
     temp_roll_3 = temp_c.rolling(3, min_periods=1).mean().bfill().fillna(temp_c)
@@ -85,12 +90,18 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     hi_f = 0.5 * (temp_f + 61.0 + ((temp_f - 68.0) * 1.2) + (humid * 0.094))
     heat_index_c = (hi_f - 32.0) * 5.0 / 9.0
 
-    # Non-linear Degree factors
+    # 3. Non-linear Degree factors & Quadratic Heat Surge
     cooling_22 = np.maximum(0.0, temp_c - 22.0)
+    cooling_24 = np.maximum(0.0, temp_c - 24.0)
+    cooling_24_sq = cooling_24 ** 2
     cooling_26 = np.maximum(0.0, temp_c - 26.0)
     heating_15 = np.maximum(0.0, 15.0 - temp_c)
 
-    # 3. Harmonic Temporal Encodings (captures bimodal daily demand curves)
+    # 4. Cross-Interactions
+    temp_x_hour = temp_c * (hour / 24.0)
+    solar_x_temp = (solar / 100.0) * temp_c
+
+    # 5. Harmonic Temporal Encodings (captures bimodal daily demand curves)
     sin_h = np.sin(2.0 * np.pi * hour / 24.0)
     cos_h = np.cos(2.0 * np.pi * hour / 24.0)
     sin_2h = np.sin(4.0 * np.pi * hour / 24.0)
@@ -124,6 +135,8 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     data["dew_point"] = dew_point
     data["vapor_pressure"] = vp
     data["cooling_22"] = cooling_22
+    data["cooling_24"] = cooling_24
+    data["cooling_24_sq"] = cooling_24_sq
     data["cooling_26"] = cooling_26
     data["heating_15"] = heating_15
 
@@ -135,6 +148,9 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     data["solar_roll_3"] = solar_roll_3
     data["humid_diff_1"] = humid_diff_1
     data["humid_roll_3"] = humid_roll_3
+
+    data["temp_x_hour"] = temp_x_hour
+    data["solar_x_temp"] = solar_x_temp
 
     data["is_peak_window"] = is_peak_window
     data["is_weekend"] = is_weekend
