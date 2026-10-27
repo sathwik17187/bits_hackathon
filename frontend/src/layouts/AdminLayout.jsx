@@ -66,10 +66,10 @@ export const AdminLayout = () => {
               </div>
               <div>
                 <div style={{ fontSize: '1rem', fontWeight: 800, color: '#fff', textTransform: 'uppercase', letterSpacing: '-0.02em' }}>
-                  CROX <span style={{ color: 'var(--color-precision-orange)' }}>//</span> ADMIN
+                  NEXUSGRID <span style={{ color: 'var(--color-precision-orange)' }}>//</span> ADMIN
                 </div>
                 <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                  CATALYST CONTROL PLANE
+                  AUTONOMOUS CONTROL PLANE
                 </div>
               </div>
             </Link>

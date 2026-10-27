@@ -60,7 +60,7 @@ export const ClientLayout = () => {
               </div>
               <div>
                 <div style={{ fontSize: '1rem', fontWeight: 800, color: '#fff', textTransform: 'uppercase', letterSpacing: '-0.02em' }}>
-                  CROX <span style={{ color: '#10b981' }}>//</span> CONSUMER
+                  NEXUSGRID <span style={{ color: '#10b981' }}>//</span> CONSUMER
                 </div>
                 <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                   ENERGY TRANSPARENCY

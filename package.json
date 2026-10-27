@@ -1,0 +1,11 @@
+{
+  "name": "nexusgrid",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NexusGrid — Autonomous Smart Energy Microgrid Platform on Zoho Catalyst",
+  "scripts": {
+    "install": "npm --prefix frontend install",
+    "build": "npm --prefix frontend install && npm --prefix frontend run build && node copy-dist.js",
+    "start": "node copy-dist.js"
+  }
+}

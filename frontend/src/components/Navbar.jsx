@@ -29,7 +29,7 @@ export const Navbar = () => {
             letterSpacing: '-0.04em',
             textTransform: 'uppercase'
           }}>
-            CROX
+            NEXUS<span style={{ color: 'var(--crox-orange)' }}>GRID</span>
           </span>
           <span style={{
             fontSize: '0.65rem',
