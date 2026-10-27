@@ -95,6 +95,116 @@ def generate_forecast(req: ForecastRequest):
     return result
 
 
+class SingleLineTelemetry(BaseModel):
+    timestamp: str
+    ambient_temp_c: float
+    humidity_pct: float
+    solar_irradiance_wm2: float
+    battery_soc: Optional[float] = 85.0
+
+
+@app.post("/api/predict-line")
+def predict_line(item: SingleLineTelemetry):
+    """
+    Feeds a single line of dataset to the QuickML / ensemble model.
+    Evaluates rule transitions and battery SoC delta for that specific line.
+    """
+    df = pd.DataFrame([{
+        "timestamp": item.timestamp,
+        "ambient_temp_c": item.ambient_temp_c,
+        "humidity_pct": item.humidity_pct,
+        "solar_irradiance_wm2": item.solar_irradiance_wm2
+    }])
+    preds = predict(df)
+    pred_kw = float(preds[0])
+    ts = pd.to_datetime(item.timestamp)
+    eval_res = TransitionController.evaluate_hour(pred_kw, ts.hour)
+    eval_res["timestamp"] = item.timestamp
+    eval_res["ambient_temp_c"] = item.ambient_temp_c
+    eval_res["humidity_pct"] = item.humidity_pct
+    eval_res["solar_irradiance_wm2"] = item.solar_irradiance_wm2
+
+    # Battery SoC calculation
+    current_soc = float(item.battery_soc or 85.0)
+    if eval_res["grid_mode"] == "RENEWABLE_STORAGE":
+        discharge_rate = (pred_kw / 250.0) * 4.5
+        next_soc = max(15.0, current_soc - discharge_rate)
+    else:
+        charge_rate = (item.solar_irradiance_wm2 / 300.0) * 3.0 + 1.2
+        next_soc = min(100.0, current_soc + charge_rate)
+
+    eval_res["battery_soc_pct"] = round(next_soc, 1)
+    eval_res["battery_soc_delta"] = round(next_soc - current_soc, 2)
+    return eval_res
+
+
+@app.get("/api/dataset-lines")
+def get_dataset_lines(offset: int = 0, limit: int = 100):
+    """
+    Returns lines from the raw sample_test_input.csv dataset for line-by-line streaming.
+    """
+    sample_path = os.path.join(os.path.dirname(__file__), "sample_test_input.csv")
+    if not os.path.exists(sample_path):
+        raise HTTPException(status_code=404, detail="sample_test_input.csv not found")
+
+    df = pd.read_csv(sample_path)
+    total_lines = len(df)
+    subset = df.iloc[offset:offset+limit].to_dict(orient="records")
+    return {
+        "total_lines": total_lines,
+        "offset": offset,
+        "limit": limit,
+        "records": subset
+    }
+
+
+@app.get("/api/analyze-dataset-lines")
+def analyze_dataset_lines(offset: int = 0, limit: int = 100, initial_battery_soc: float = 85.0):
+    """
+    Evaluates lines from sample_test_input.csv through the ML model and TransitionController,
+    returning full enriched telemetry, predicted demand, grid mode, overload flags, and SoC deltas.
+    """
+    sample_path = os.path.join(os.path.dirname(__file__), "sample_test_input.csv")
+    if not os.path.exists(sample_path):
+        raise HTTPException(status_code=404, detail="sample_test_input.csv not found")
+
+    df = pd.read_csv(sample_path)
+    total_lines = len(df)
+    clamped_limit = min(limit, 1000)
+    subset_df = df.iloc[offset:offset+clamped_limit].copy()
+    if len(subset_df) == 0:
+        return {"total_lines": total_lines, "offset": offset, "limit": clamped_limit, "records": []}
+
+    preds = predict(subset_df)
+    solar_vals = subset_df["solar_irradiance_wm2"].tolist()
+    timestamps = subset_df["timestamp"].tolist()
+
+    result = TransitionController.process_forecast_series(
+        timestamps=timestamps,
+        predictions=preds.tolist(),
+        solar_irradiance=solar_vals,
+        initial_battery_soc=initial_battery_soc
+    )
+
+    enriched_records = []
+    for i, row in enumerate(result["hourly_forecasts"]):
+        rec = dict(row)
+        rec["line_index"] = offset + i + 1
+        rec["ambient_temp_c"] = float(subset_df.iloc[i].get("ambient_temp_c", 25.0))
+        rec["humidity_pct"] = float(subset_df.iloc[i].get("humidity_pct", 50.0))
+        rec["solar_irradiance_wm2"] = float(subset_df.iloc[i].get("solar_irradiance_wm2", 0.0))
+        if "precipitation_mm" in subset_df.columns:
+            rec["precipitation_mm"] = float(subset_df.iloc[i]["precipitation_mm"])
+        enriched_records.append(rec)
+
+    return {
+        "total_lines": total_lines,
+        "offset": offset,
+        "limit": clamped_limit,
+        "records": enriched_records
+    }
+
+
 @app.post("/api/upload-csv")
 async def upload_csv(file: UploadFile = File(...), initial_battery_soc: float = 85.0):
     """
@@ -174,13 +284,30 @@ def get_sample_forecast():
     return result
 
 
-# Serve static web frontend
+# Serve static web frontend & SPA fallback
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+FRONTEND_ASSETS = os.path.join(FRONTEND_DIST, "assets")
+
+if os.path.exists(FRONTEND_ASSETS):
+    app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS), name="assets")
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-@app.get("/")
-def serve_index():
-    index_file = os.path.join(STATIC_DIR, "index.html")
-    if os.path.exists(index_file):
-        return FileResponse(index_file)
-    return {"message": "HackSphere 3.0 API is active. Web UI initializing."}
+@app.get("/{full_path:path}")
+def serve_spa(full_path: str = ""):
+    """
+    Serves the production React frontend with SPA routing fallback.
+    """
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API route not found")
+
+    dist_index = os.path.join(FRONTEND_DIST, "index.html")
+    if os.path.exists(dist_index):
+        return FileResponse(dist_index)
+
+    static_index = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(static_index):
+        return FileResponse(static_index)
+
+    return {"message": "HackSphere 3.0 API is active."}
