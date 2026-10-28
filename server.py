@@ -285,7 +285,9 @@ def get_sample_forecast():
 
 
 # Serve static web frontend & SPA fallback
-FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+ROOT_DIST = os.path.join(os.path.dirname(__file__), "dist")
+FE_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+FRONTEND_DIST = ROOT_DIST if os.path.exists(ROOT_DIST) else FE_DIST
 FRONTEND_ASSETS = os.path.join(FRONTEND_DIST, "assets")
 
 if os.path.exists(FRONTEND_ASSETS):
@@ -310,4 +312,4 @@ def serve_spa(full_path: str = ""):
     if os.path.exists(static_index):
         return FileResponse(static_index)
 
-    return {"message": "HackSphere 3.0 API is active."}
+    return {"message": "NexusGrid Microgrid Engine API is active."}
